@@ -73,8 +73,12 @@ int dev_ones_init(void)
 
 static ssize_t dev_ones_read(struct file * _file, char * _buff, size_t _size, loff_t * _offset) {
 	size_t i = 0;
-	printk (KERN_NOTICE "DEVONES: bytes to read %d\n", _size);
-	for (i = 0; i < _size; i++) {
+	long* ptr = (long*)_buff;
+	for (i = 0; i < _size/4; i++) {
+		ptr[i] = 0xffffffff;
+	}
+	_buff = _buff + (_size - (_size % 4));
+	for (i = 0; i <_size % 4; i++) {
 		_buff[i] = 0xff;
 	}
 	return _size;
