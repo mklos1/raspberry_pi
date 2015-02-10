@@ -16,7 +16,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marcin Kłos");
 MODULE_DESCRIPTION("Device producing ones like /dev/zeros");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.1");
 
 int dev_ones_init(void);
 void dev_ones_exit(void);
