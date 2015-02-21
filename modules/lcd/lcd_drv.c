@@ -12,8 +12,6 @@
 #include <linux/regulator/consumer.h>
 #include <linux/delay.h>
 
-#include "lcd_drv_functions.h"
-
 MODULE_AUTHOR("Marcin Kłos");
 MODULE_DESCRIPTION("HD44780 on I2C (with PCF8574T gpio expander)");
 MODULE_LICENSE("GPL");
@@ -186,27 +184,44 @@ DEVICE_ATTR(content, 0220, NULL , write_content);
 /* Typical initialization procedure of hd44780 with 4-bit interface */
 static int hd44780_i2c_init(struct i2c_client* _client) {
    int ret = 0;
-   ret |= i2c_smbus_write_byte(_client, 0x30 | LCD_CS);
-   ret |= i2c_smbus_write_byte(_client, 0x30 & ~LCD_CS);
+   ret = i2c_smbus_write_byte(_client, 0x30 | LCD_CS);
+   if (ret < 0) goto init_error;
+   ret = i2c_smbus_write_byte(_client, 0x30 & ~LCD_CS);
+   if (ret < 0) goto init_error;
    msleep(5);
-   ret |= i2c_smbus_write_byte(_client, 0x30 | LCD_CS);
-   ret |= i2c_smbus_write_byte(_client, 0x30 & ~LCD_CS);
+   ret = i2c_smbus_write_byte(_client, 0x30 | LCD_CS);
+   if (ret < 0) goto init_error;
+   ret = i2c_smbus_write_byte(_client, 0x30 & ~LCD_CS);
+   if (ret < 0) goto init_error;
    udelay(200);
-   ret |= i2c_smbus_write_byte(_client, 0x30 | LCD_CS);
-   ret |= i2c_smbus_write_byte(_client, 0x30 & ~LCD_CS);
+   ret = i2c_smbus_write_byte(_client, 0x30 | LCD_CS);
+   if (ret < 0) goto init_error;
+   ret = i2c_smbus_write_byte(_client, 0x30 & ~LCD_CS);
+   if (ret < 0) goto init_error;
    udelay(200);
-   ret |= i2c_smbus_write_byte(_client, 0x20 | LCD_CS);
-   ret |= i2c_smbus_write_byte(_client, 0x20 & ~LCD_CS);
+   ret = i2c_smbus_write_byte(_client, 0x20 | LCD_CS);
+   if (ret < 0) goto init_error;
+   ret = i2c_smbus_write_byte(_client, 0x20 & ~LCD_CS);
+   if (ret < 0) goto init_error;
    udelay(700);
-   ret |= hd44780_i2c_send(_client, LCD_MODE_CMD, 0x28);
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x28);
+   if (ret < 0) goto init_error;
    udelay(700);
-   ret |= hd44780_i2c_send(_client, LCD_MODE_CMD, 0x08);
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x08);
+   if (ret < 0) goto init_error;
    udelay(700);
-   ret |= hd44780_i2c_send(_client, LCD_MODE_CMD, 0x01);
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x01);
+   if (ret < 0) goto init_error;
    udelay(700);
-   ret |= hd44780_i2c_send(_client, LCD_MODE_CMD, 0x06);
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x06);
+   if (ret < 0) goto init_error;
    udelay(700);
-   ret |= hd44780_i2c_send(_client, LCD_MODE_CMD, 0x0F);
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x0F);
+   if (ret < 0) goto init_error;
+   return 0;
+
+init_error:
+   dev_err(&_client->dev, "lcd_drv: Error in lcd initialization, errno: %d\n", ret);
    return ret;
 }
 
@@ -217,24 +232,20 @@ static int hd44780_i2c_deinit(struct i2c_client* _client) {
    int ret = 0;
    //clear display
    ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x01);
-   if (ret < 0) {
-      dev_err(&_client->dev, "lcd_dev: unable to deinit lcd, errno: %d\n", ret);
-      return ret;
-   }
+   if (ret < 0) goto deinit_error;
    //off display, off cursor
    msleep(1);
    ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x08);
-   if (ret < 0) {
-      dev_err(&_client->dev, "lcd_dev: unable to deinit lcd, errno: %d\n", ret);
-      return ret;
-   }
+   if (ret < 0) goto deinit_error;
    msleep(1);
    ret = i2c_smbus_write_byte(_client, (0xf0 | (LCD_CS & ~LCD_BL)));
-   if (ret < 0) {
-      dev_err(&_client->dev, "lcd_dev: unable to deinit lcd, errno: %d\n", ret);
-      return ret;
-   }
+   if (ret < 0) goto deinit_error;
    return 0;
+
+deinit_error:
+   dev_err(&_client->dev, "lcd_dev: unable to deinit lcd, errno: %d\n", ret);
+   return ret;
+
 }
 
 /* Nothing special to probe() function. Allocate resources and prepare device
@@ -254,22 +265,17 @@ static int hd44780_i2c_probe(struct i2c_client* _client,
    data->backlight = LCD_BL;
    i2c_set_clientdata(_client, data);
    ret = hd44780_i2c_init(_client);
-   if (ret < 0) {
-      dev_err(&_client->dev, "lcd_drv: Unable to init lcd, errno: %d\n", ret);      
-      return ret;
-   }
+   if (ret < 0) goto probe_error;
    ret = device_create_file(dev, &dev_attr_backlight);
-   if (ret < 0) {
-      dev_err(&_client->dev, "lcd_drv: Unable to create attribute, errno: %d\n", ret);
-      return ret;
-   }   
+   if (ret < 0) goto probe_error;
    ret = device_create_file(dev, &dev_attr_content);
-   if (ret < 0) {
-      dev_err(&_client->dev, "lcd_drv: Unable to create attribute, errno: %d\n", ret);
-      return ret;
-   }
-
+   if (ret < 0) goto probe_error;
    return 0;
+
+probe_error:
+   dev_err(&_client->dev, "lcd_drv: Probe error, errno: %d\n", ret);
+   return ret;
+
 }
 
 /* Deinitiazation on remove */
