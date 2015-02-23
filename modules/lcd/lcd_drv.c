@@ -67,6 +67,8 @@ struct hd44780_data {
    unsigned char cursor_state;
    unsigned char cursor_blink;
    unsigned char display_state;
+   unsigned char x_pos;
+   unsigned char y_pos;
 };
 
 static struct i2c_driver hd44780_i2c_driver = {
@@ -119,6 +121,22 @@ static int hd44780_i2c_string(struct i2c_client* _client, char* _str) {
       _str++;
    }
    return ret;
+}
+
+/* Sets curor position */
+static int hd44780_i2c_gotoxy(struct i2c_client* _client, unsigned char _x,
+   unsigned char _y) {
+   struct hd44780_data* data = i2c_get_clientdata(_client);
+   int ret = 0;
+   int i;
+   if (ret < 0) return -EIO;
+   if (_x > 15 ) _x = 15;
+   if (_y > 1 ) _y = 1;
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x80 + ((64 * _y) + _x));
+   if (ret < 0) return -EIO;
+   data->x_pos = _x;
+   data->y_pos = _y;
+   return 0;
 }
 
 /* Writing to PCF is a bit complicated, because there is no possibility to
@@ -297,7 +315,7 @@ static int hd44780_i2c_init(struct i2c_client* _client) {
    ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x06);
    if (ret < 0) goto init_error;
    udelay(700);
-   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x0E);
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x0F);
    if (ret < 0) goto init_error;
    return 0;
 
@@ -360,7 +378,6 @@ static int hd44780_i2c_probe(struct i2c_client* _client,
    if (ret < 0) goto probe_error;
    ret = device_create_file(dev, &dev_attr_display_state);
    if (ret < 0) goto probe_error;
-
    return 0;
 
 probe_error:
