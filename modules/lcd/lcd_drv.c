@@ -113,16 +113,6 @@ static int hd44780_i2c_send(struct i2c_client* _client, char _mode,
    return ret;
 }
 
-/* Function returns negative if error */
-static int hd44780_i2c_string(struct i2c_client* _client, char* _str) {
-   int ret = 0;
-   while(*_str != 0) {
-      ret |= hd44780_i2c_send(_client, LCD_MODE_DATA, *_str);
-      _str++;
-   }
-   return ret;
-}
-
 /* Sets curor position */
 static int hd44780_i2c_gotoxy(struct i2c_client* _client, unsigned char _x,
    unsigned char _y) {
@@ -276,11 +266,33 @@ static ssize_t write_display_state(struct device* _dev,
    return _count;
 }
 
+/* Clears display */
+static ssize_t write_display_clear(struct device* _dev,
+   struct device_attribute* _attr, const char* _buf, size_t _count) {
+   struct i2c_client* _client = to_i2c_client(_dev);
+   int ret = 0;
+   if (_count < 1) {
+      return -EIO;
+   } else {
+      switch (_buf[0]) {
+         case 0:
+         case '0':
+            break;
+         default:
+            ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x1);
+            if (ret < 0) return -EIO;
+            break;
+      }
+   }
+   return _count;
+}
+
 DEVICE_ATTR(backlight, 0220, NULL, write_backlight);
 DEVICE_ATTR(content, 0220, NULL , write_content);
 DEVICE_ATTR(cursor_state, 0220, NULL, write_cursor_state);
 DEVICE_ATTR(cursor_blink, 0220, NULL, write_cursor_blink);
 DEVICE_ATTR(display_state, 0200, NULL, write_display_state);
+DEVICE_ATTR(display_clear, 0200, NULL, write_display_clear);
 
 /* Typical initialization procedure of hd44780 with 4-bit interface */
 static int hd44780_i2c_init(struct i2c_client* _client) {
@@ -381,7 +393,9 @@ static int hd44780_i2c_probe(struct i2c_client* _client,
    if (ret < 0) goto probe_error;
    ret = device_create_file(dev, &dev_attr_display_state);
    if (ret < 0) goto probe_error;
-   return 0;
+   ret = device_create_file(dev, &dev_attr_display_clear);
+   if (ret < 0) goto probe_error;
+  return 0;
 
 probe_error:
    dev_err(&_client->dev, "lcd_drv: Probe error, errno: %d\n", ret);
@@ -394,7 +408,7 @@ static int hd44780_i2c_remove(struct i2c_client* _client) {
    int ret = 0;
    ret = hd44780_i2c_deinit(_client);
    if (ret < 0) {
-      dev_err(&_client->dev, "lcd_drv: Error while removing device,
+      dev_err(&_client->dev, "lcd_drv: Error while removing device, \
          errno %d\n", ret);
       return ret;
    }
