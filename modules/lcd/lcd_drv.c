@@ -128,7 +128,6 @@ static int hd44780_i2c_gotoxy(struct i2c_client* _client, unsigned char _x,
    unsigned char _y) {
    struct hd44780_data* data = i2c_get_clientdata(_client);
    int ret = 0;
-   int i;
    if (ret < 0) return -EIO;
    if (_x > 15 ) _x = 15;
    if (_y > 1 ) _y = 1;
@@ -143,8 +142,8 @@ static int hd44780_i2c_gotoxy(struct i2c_client* _client, unsigned char _x,
 write single output without changing others. Readback and write won't work.
 Fortunetly we can write anything to the PCF while enable pin of LCD stays 
 in HIGH. */
-static ssize_t write_backlight(struct device *dev, struct device_attribute *attr,
-      const char *buf, size_t count) {
+static ssize_t write_backlight(struct device *dev, struct device_attribute*
+   attr, const char *buf, size_t count) {
    struct i2c_client* _client = to_i2c_client(dev);
    struct hd44780_data* data = i2c_get_clientdata(_client);
    int ret = 0;
@@ -168,36 +167,39 @@ static ssize_t write_backlight(struct device *dev, struct device_attribute *attr
    return count; 
 }
 
-/* We assume that userland wants to write max 2 lines (so only one \n can
-occur). If one line is longer than 16 characters, exess is droped. This
-this function is not fully tested, possibly buggy. */
-static ssize_t write_content(struct device* _dev, struct device_attribute* _attr,
-   const char* _buf, size_t _count) {
+/* We assume that userland want to write max two lines. Max size is 34 (two
+full lines and two \n). If userland wants to write more, -ENOSPACE is 
+returned. After writing cursor is set to home position. Lines shorter than
+16 characters are filled with spaces to write full display. It's nessesary
+for clearing old content without CLEAR command. CLEAR command causes visible
+blinking. */
+static ssize_t write_content(struct device* _dev, struct device_attribute* 
+   _attr, const char* _buf, size_t _count) {
    struct i2c_client* _client = to_i2c_client(_dev);
-   int i = 0;
+   int i, k, c;
    int ret = 0;
-   unsigned char line_cnt = 0;
+   unsigned char char_cnt = 0;
+   if (_count > 34) return -ENOSPC;
    if (_count > 0) {
-      ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x01);
-      if (ret < 0) return -EIO;
       msleep(1);
-      for (i = 0, line_cnt = 0; i < _count; line_cnt++, i++) {
+      for (i = 0, char_cnt = 0; i < _count; i++) {
          if (_buf[i] == '\n') {
-            if (line_cnt >= 0xf0) {
-               ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x01);
+            c = char_cnt;
+            for (k = c; k <= 15; k++) {
+               ret = hd44780_i2c_send(_client, LCD_MODE_DATA, ' ');
                if (ret < 0) return -EIO;
-               line_cnt = 0;
-            } else {
-               ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0xC0);
-               if (ret < 0) return -EIO;
-               line_cnt = 0xf0;
             }
+            ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0xC0);
+            if (ret < 0) return -EIO;
+            char_cnt = 0;
             continue;
          } else {
             ret = hd44780_i2c_send(_client, LCD_MODE_DATA, _buf[i]);
             if (ret < 0) return -EIO;
          }
+         char_cnt++;
       }
+      hd44780_i2c_gotoxy(_client, 0, 0);
       return _count;
    } else {
       return -EIO;
@@ -206,8 +208,8 @@ static ssize_t write_content(struct device* _dev, struct device_attribute* _attr
 }
 
 /* Set cursor state to dash on or off. Blink overrides curror setting. */
-static ssize_t write_cursor_state(struct device* _dev, struct device_attribute* _attr,
-   const char* _buf, size_t _count) {
+static ssize_t write_cursor_state(struct device* _dev, struct device_attribute*
+   _attr, const char* _buf, size_t _count) {
    struct i2c_client* _client = to_i2c_client(_dev);
    struct hd44780_data* _data = i2c_get_clientdata(_client);
    if (_count < 1) {
@@ -229,8 +231,8 @@ static ssize_t write_cursor_state(struct device* _dev, struct device_attribute* 
 }
 
 /* Set cursor to blink on or off. This setting overrides curror bit state. */
-static ssize_t write_cursor_blink(struct device* _dev, struct device_attribute* _attr,
-   const char* _buf, size_t _count) {
+static ssize_t write_cursor_blink(struct device* _dev, struct device_attribute*
+   _attr, const char* _buf, size_t _count) {
    struct i2c_client* _client = to_i2c_client(_dev);
    struct hd44780_data* _data = i2c_get_clientdata(_client);
    if (_count < 1) {
@@ -252,8 +254,8 @@ static ssize_t write_cursor_blink(struct device* _dev, struct device_attribute* 
 }
 
 /* Set display on or off */
-static ssize_t write_display_state(struct device* _dev, struct device_attribute* _attr,
-   const char* _buf, size_t _count) {
+static ssize_t write_display_state(struct device* _dev,
+   struct device_attribute* _attr, const char* _buf, size_t _count) {
    struct i2c_client* _client = to_i2c_client(_dev);
    struct hd44780_data* _data = i2c_get_clientdata(_client);
    if (_count < 1) {
@@ -315,12 +317,13 @@ static int hd44780_i2c_init(struct i2c_client* _client) {
    ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x06);
    if (ret < 0) goto init_error;
    udelay(700);
-   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x0F);
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x0E);
    if (ret < 0) goto init_error;
    return 0;
 
 init_error:
-   dev_err(&_client->dev, "lcd_drv: Error in lcd initialization, errno: %d\n", ret);
+   dev_err(&_client->dev, "lcd_drv: Error in lcd initialization, errno: %d\n",
+      ret);
    return ret;
 }
 
@@ -391,7 +394,8 @@ static int hd44780_i2c_remove(struct i2c_client* _client) {
    int ret = 0;
    ret = hd44780_i2c_deinit(_client);
    if (ret < 0) {
-      dev_err(&_client->dev, "lcd_drv: Error while removing device, errno %d\n", ret);
+      dev_err(&_client->dev, "lcd_drv: Error while removing device,
+         errno %d\n", ret);
       return ret;
    }
    return 0;
