@@ -139,28 +139,28 @@ static ssize_t lcd_update_display(struct lcd_hdpcf* _lcd) {
    return 0;
 }
 
-/* Set cursor state to dash on or off. Blink overrides curror setting. */
+/* Set cursor state to dash on or off. Blink overrides curror setting.
+If I2C error, -EIO returned. */
 static ssize_t lcd_update_state(struct lcd_hdpcf* _lcd) {
    struct i2c_client* _client = client;
    struct hd44780_data* _data = i2c_get_clientdata(_client);
+   int ret;
    _data->cursor_state = (_lcd->cursor_state) ? LCD_CURSOR : 0;
    _data->cursor_blink = (_lcd->cursor_blink) ? LCD_CURSOR_BLINK : 0;
    _data->display_state = (_lcd->display_state) ? LCD_DISPLAY : 0;
    _data->backlight = (_lcd->backlight_state) ? LCD_BL : 0;
-
-   hd44780_i2c_send(_client, LCD_MODE_CMD, 0x08 | _data->cursor_state
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x08 | _data->cursor_state
       | _data->cursor_blink | _data->display_state);
-
-   i2c_smbus_write_byte(_client, 0xf0 | LCD_CS | _data->backlight);
-
+   if (ret < 0) return -EIO;
+   ret = i2c_smbus_write_byte(_client, 0xf0 | LCD_CS | _data->backlight);
+   if (ret < 0) return -EIO;
    return 0;
 }
 
-/* Sets curor position */
+/* Sets curor position. If I2C error -EIO returned. */
 static int lcd_gotoxy(unsigned char _x, unsigned char _y) {
    struct i2c_client* _client = client;
    int ret = 0;
-   if (ret < 0) return -EIO;
    if (_x > 15 ) _x = 15;
    if (_y > 1 ) _y = 1;
    ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x80 + ((64 * _y) + _x));
@@ -168,12 +168,37 @@ static int lcd_gotoxy(unsigned char _x, unsigned char _y) {
    return 0;
 }
 
+/* Shifts lcd content to left (0) or right (1). If I2C error -EIO returned. */
+static ssize_t lcd_shift(unsigned char _dir) {
+   struct i2c_client* _client = client;
+   int ret = 0;
+   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x18 | ((_dir == 0) ? 0 : 4));
+   if (ret < 0) return -EIO;
+   return 0;
+}
 
-/* Clears display */
+
+/* Clears display. If I2C error, -EIO returned. */
 static ssize_t lcd_clear(void) {
   struct i2c_client* _client = client;
   int ret = 0;
   ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x1);
+  if (ret < 0) return -EIO;
+  return 0;
+}
+
+/* Sets user defined char to CGRAM. If bad CGRAM address -ENXIO is returned,
+if I2C error, -EIO returned */
+static ssize_t lcd_set_char(struct user_char* _char) {
+  struct i2c_client* _client = client;
+  int ret = 0;
+  int i = 0;
+  if (_char->address < 0 || _char->address > 7) return -ENXIO;
+  ret = hd44780_i2c_send(_client, LCD_MODE_CMD, 0x40 + _char->address);
+  for (i = 0; i < 8; i++) {
+     ret = hd44780_i2c_send(_client, LCD_MODE_DATA, _char->chr[i]);
+     if (ret < 0) return -EIO;
+  }
   return 0;
 }
 
@@ -290,21 +315,34 @@ static int hd44780_i2c_remove(struct i2c_client* _client) {
 long hdpcf_ioctl(struct file* _file, unsigned int _cmd,
    unsigned long _args) {
    struct lcd_hdpcf* lcd;
+   int ret;
    switch (_cmd) {
       case IOCTL_LCD_UPDATE_STATE:
          lcd = (struct lcd_hdpcf*) _args;
-         lcd_update_state(lcd);
+         ret = lcd_update_state(lcd);
+         if (ret < 0) return ret;
          break;
       case IOCTL_LCD_UPDATE_DISPLAY:
          lcd = (struct lcd_hdpcf*) _args;
-         lcd_update_display(lcd);
+         ret = lcd_update_display(lcd);
+         if (ret < 0) return ret;
          break;
       case IOCTL_LCD_CLEAR:
-         lcd_clear();
+         ret = lcd_clear();
          msleep(5);
+         if (ret < 0) return ret;
          break;
       case IOCTL_LCD_HOME:
-         lcd_gotoxy(0, 0);
+         ret = lcd_gotoxy(0, 0);
+         if (ret < 0) return ret;
+         break;
+      case IOCTL_LCD_SHIFT:
+         ret = lcd_shift(_args);
+         if (ret < 0) return ret;
+         break;
+      case IOCTL_LCD_SET_CHAR:
+         ret = lcd_set_char((struct user_char*)_args);
+         if (ret < 0) return ret;
          break;
       default:
          printk (KERN_INFO "hdpcf: Unknown IOCTL\n");
